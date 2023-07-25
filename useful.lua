@@ -3,64 +3,97 @@
 -- E2 fade time
 -- E3 metro time (random cut)
 
-file = _path.dust .. "/audio/Loops/5-4bell.wav"
-fade_time = 0.01
+function rerun()
+    norns.script.load(norns.state.script)
+end
+
+----------------------------------------
+
+file = _path.dust .. "/audio/Loops/piano.wav"
+fade_time = 0.00
 metro_time = 1.0
 
 positions = { 0, 0, 0, 0 }
 g = grid.connect()
-m = metro.init()
 
-m.time = metro_time
-m.event = function()
-    for i = 1, 4 do
-        softcut.position(i, 1 + math.random(8) * 0.25)
-    end
-end
+--m = metro.init()
+--m.time = metro_time
+
+TRACKS = 1
+
+durations = { 0, 0, 0, 0 }
+
+--m.event = function()
+--    for i = 1, 4 do
+--        softcut.position(i, 1 + math.random(8) * 0.25)
+--    end
+--end
 
 
-
-function update_positions(i, pos)
-    positions[i] = pos - 1
-    redraw()
-end
 
 function init()
-    softcut.buffer_clear()
-    softcut.buffer_read_mono(file, 0, 1, -1, 1, 1)
+    -- grid
+    grid_dirty = true
+    softcut.buffer_clear() -- Clear the buffer before loading the new file
+    get_duration(file)
+    -- softcut
 
-    for i = 1, 4 do
+    local ch, samples = audio.file_info(file)
+
+    softcut.buffer_read_mono(file, 0, 0, file_duration, 1, 1)
+    local file_duration = samples / 48000
+    print(file_duration)
+
+    for i = 1, TRACKS do
+        durations[i] = file_duration
         softcut.enable(i, 1)
         softcut.buffer(i, 1)
         softcut.level(i, 1.0)
-        softcut.pan(i, (i - 2.5) * 0.5)
-        softcut.rate(i, i * 0.25)
+        softcut.pan(i, 0)
+        softcut.rate(i, 1)
         softcut.loop(i, 1)
-        softcut.loop_start(i, 1)
-        softcut.loop_end(i, 3)
-        softcut.position(i, 1)
-        softcut.play(i, 1)
+
         softcut.fade_time(i, fade_time)
+        softcut.loop_start(i, 0)
+        softcut.loop_end(i, file_duration)
+        softcut.position(i, 0)
+        softcut.play(i, 1)
         softcut.phase_quant(i, 0.125)
     end
 
     softcut.event_phase(update_positions)
     softcut.poll_start_phase()
 
-    m:start()
+
+    --m:start()
 end
 
 function enc(n, d)
     if n == 2 then
         fade_time = util.clamp(fade_time + d / 100, 0, 1)
-        for i = 1, 4 do
+        for i = 1, TRACKS do
             softcut.fade_time(i, fade_time)
         end
     elseif n == 3 then
-        metro_time = util.clamp(metro_time + d / 8, 0.125, 4)
-        m.time = metro_time
+        metro_time = util.clamp(metro_time + d / 8, 0.0125, 4)
+        --m.time = metro_time
     end
     redraw()
+end
+
+function redraw_grid()
+    g:all(0)
+    -- show loop presets
+    for i = 1, 4 do
+        for j = 1, TRACKS do
+            g:led(12 + i, j * 2 - 1, 2)
+        end
+    end
+    -- show current positions
+    for i = 1, TRACKS do
+        g:led(positions[i],i*2, 15)
+    end
+    g:refresh()
 end
 
 function redraw()
@@ -84,4 +117,29 @@ function redraw()
     screen.move(118, 50)
     screen.text_right(string.format("%.2f", metro_time))
     screen.update()
+end
+
+function update_positions(i, pos)
+    normalized_position=(pos)/durations[i]
+    positions[i] = math.floor(normalized_position * 16) + 1
+    print("positioni:".. positions[i])
+    redraw()
+    grid_dirty = true
+    redraw_grid()
+end
+
+
+function get_duration(file)
+    if util.file_exists(file) == true then
+        local ch, samples, samplerate = audio.file_info(file)
+        local duration = samples / samplerate
+        print("loading file: " .. file)
+        print("  channels:\t" .. ch)
+        print("  samples:\t" .. samples)
+        print("  sample rate:\t" .. samplerate .. "hz")
+        print("  duration:\t" .. duration .. " sec")
+        return duration
+    else
+        print "read_wav(): file not found"
+    end
 end
