@@ -9,27 +9,16 @@ end
 
 ----------------------------------------
 
-file = _path.dust .. "/audio/Loops/piano.wav"
+file = _path.dust .. "/audio/Loops/perc_loop.wav"
 fade_time = 0.00
 metro_time = 1.0
 
 positions = { 0, 0, 0, 0 }
 g = grid.connect()
 
---m = metro.init()
---m.time = metro_time
-
 TRACKS = 1
 
 durations = { 0, 0, 0, 0 }
-
---m.event = function()
---    for i = 1, 4 do
---        softcut.position(i, 1 + math.random(8) * 0.25)
---    end
---end
-
-
 
 function init()
     -- grid
@@ -39,26 +28,51 @@ function init()
     -- softcut
 
     local ch, samples = audio.file_info(file)
-
-    softcut.buffer_read_mono(file, 0, 0, file_duration, 1, 1)
     local file_duration = samples / 48000
-    print(file_duration)
 
-    for i = 1, TRACKS do
+    for i = 1, TRACKS, 2 do
         durations[i] = file_duration
+        softcut.buffer_read_mono(file, 0, 0, file_duration, i, i)
+        softcut.buffer_read_mono(file, 0, 0, file_duration, i+1, i+1)
+
+        softcut.enable(i, 0)
+        softcut.enable(i + 1, 0)
+
         softcut.enable(i, 1)
+        softcut.enable(i + 1, 1)
+
         softcut.buffer(i, 1)
+        softcut.buffer(i + 1, 0)
+
         softcut.level(i, 1.0)
-        softcut.pan(i, 0)
+        softcut.level(i + 1, 1.0)
+
+        softcut.pan(i, -1)
+        softcut.pan(i + 1, 1)
+
         softcut.rate(i, 1)
+        softcut.rate(i + 1, 1)
+
         softcut.loop(i, 1)
+        softcut.loop(i + 1, 1)
 
         softcut.fade_time(i, fade_time)
+        softcut.fade_time(i + 1, fade_time)
+
         softcut.loop_start(i, 0)
+        softcut.loop_start(i + 1, 0)
+
         softcut.loop_end(i, file_duration)
+        softcut.loop_end(i + 1, file_duration)
+
         softcut.position(i, 0)
+        softcut.position(i + 1, 0)
+
         softcut.play(i, 1)
+        softcut.play(i + 1, 1)
+
         softcut.phase_quant(i, 0.125)
+        --
     end
 
     softcut.event_phase(update_positions)
@@ -86,12 +100,12 @@ function redraw_grid()
     -- show loop presets
     for i = 1, 4 do
         for j = 1, TRACKS do
-            g:led(12 + i, j * 2 - 1, 2)
+            g:led(4 + i, j * 2 - 1, 15)
         end
     end
     -- show current positions
     for i = 1, TRACKS do
-        g:led(positions[i],i*2, 15)
+        g:led(positions[i], i * 2, 15)
     end
     g:refresh()
 end
@@ -107,7 +121,6 @@ function redraw()
     screen.move(100, 20)
     screen.line_rel(positions[4] * 8, 0)
     screen.stroke()
-
     screen.move(10, 40)
     screen.text("fade time:")
     screen.move(118, 40)
@@ -120,14 +133,13 @@ function redraw()
 end
 
 function update_positions(i, pos)
-    normalized_position=(pos)/durations[i]
-    positions[i] = math.floor(normalized_position * 16) + 1
-    print("positioni:".. positions[i])
+    normalized_position = (pos) / durations[i]
+    positions[i] = math.floor(normalized_position * 8) + 1
+    print("positioni:" .. positions[i])
     redraw()
     grid_dirty = true
     redraw_grid()
 end
-
 
 function get_duration(file)
     if util.file_exists(file) == true then
