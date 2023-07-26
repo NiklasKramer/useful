@@ -8,21 +8,42 @@ function rerun()
 end
 
 ----------------------------------------
-
-file = _path.dust .. "/audio/Loops/perc_loop.wav"
+------ CONSTANTS -----------------------
+file = _path.dust .. "/audio/Loops/piano.wav"
 fade_time = 0.00
 metro_time = 1.0
+
+speed_list = { 0.25, 0.5, 1.0, 2.0, 4.0 }
+speed_step = 3
+reverse = 1
+duration = 0
+position = 0
+is_playing = 0
+
+track_info = { speedlist = speed_list,
+               speed_step = speed_step,
+               reverse = reverse,
+               duration = duration,
+               is_playing = is_playing,
+               position = position }
+
+track_infos = { track_info, track_info, track_info }
 
 positions = { 0, 0, 0, 0 }
 g = grid.connect()
 
 TRACKS = 1
 
-durations = { 0, 0, 0, 0 }
 
+------- INIT -------
 function init()
     -- grid
     grid_dirty = true
+    init_softcut()
+
+end
+
+function init_softcut()
     softcut.buffer_clear() -- Clear the buffer before loading the new file
     get_duration(file)
     -- softcut
@@ -31,9 +52,10 @@ function init()
     local file_duration = samples / 48000
 
     for i = 1, TRACKS, 2 do
-        durations[i] = file_duration
+        track_infos[i].duration = file_duration
+
         softcut.buffer_read_mono(file, 0, 0, file_duration, i, i)
-        softcut.buffer_read_mono(file, 0, 0, file_duration, i+1, i+1)
+        softcut.buffer_read_mono(file, 0, 0, file_duration, i + 1, i + 1)
 
         softcut.enable(i, 0)
         softcut.enable(i + 1, 0)
@@ -77,24 +99,9 @@ function init()
 
     softcut.event_phase(update_positions)
     softcut.poll_start_phase()
-
-
-    --m:start()
 end
 
-function enc(n, d)
-    if n == 2 then
-        fade_time = util.clamp(fade_time + d / 100, 0, 1)
-        for i = 1, TRACKS do
-            softcut.fade_time(i, fade_time)
-        end
-    elseif n == 3 then
-        metro_time = util.clamp(metro_time + d / 8, 0.0125, 4)
-        --m.time = metro_time
-    end
-    redraw()
-end
-
+------- GRID -------
 function redraw_grid()
     g:all(0)
     -- show loop presets
@@ -105,21 +112,77 @@ function redraw_grid()
     end
     -- show current positions
     for i = 1, TRACKS do
-        g:led(positions[i], i * 2, 15)
+        g:led(track_infos[i].position, i * 2, 15)
     end
     g:refresh()
 end
 
-function redraw()
+function g.key(x, y, z)
+    if z == 1 then
+        if y == 1 then
+            if x == 1 then
+                track_infos[1].is_playing = 1 - track_infos[1].is_playing
+                softcut.play(1, track_infos[1].is_playing)
+                softcut.play(2, track_infos[1].is_playing)
+            end
+            -- set Tempo
+            if x == 4 then
+                if (track_infos[1].speed_step < #speed_list) then
+                    track_infos[1].speed_step = track_infos[1].speed_step + 1
+                    softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
+                    softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
+                end
+            end
+            if x == 3 then
+                if (track_infos[1].speed_step > 1) then
+                    track_infos[1].speed_step = track_infos[1].speed_step - 1
+                    softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
+                    softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
+                end
+            end
+            if x == 2 then
+                reverse = reverse * -1
+                softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
+                softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
+            end
+        end
+        if y == 2 then
+
+            softcut.play(1, 1)
+            softcut.play(2, 1)
+            -- set loop start
+            softcut.position(1, ((x - 1) / 8.0) * track_infos[1].duration)
+            softcut.position(2, ((x - 1) / 8.0) * track_infos[1].duration)
+
+
+        end
+    end
+end
+
+----- SCREEN ------
+function enc(n, d)
+    if n == 2 then
+        fade_time = util.clamp(fade_time + d / 100, 0, 1)
+        for i = 1, TRACKS do
+            softcut.fade_time(i, fade_time)
+        end
+    elseif n == 3 then
+        metro_time = util.clamp(metro_time + d / 8, 0.0125, 4)
+        --m.time = metro_time
+    end
+    redraw_screen()
+end
+
+function redraw_screen()
     screen.clear()
     screen.move(10, 20)
-    screen.line_rel(positions[1] * 8, 0)
+    screen.line_rel(track_infos[1].position * 8, 0)
     screen.move(40, 20)
-    screen.line_rel(positions[2] * 8, 0)
+    screen.line_rel(track_infos[2].position * 8, 0)
     screen.move(70, 20)
-    screen.line_rel(positions[3] * 8, 0)
+    screen.line_rel(track_infos[3].position * 8, 0)
     screen.move(100, 20)
-    screen.line_rel(positions[4] * 8, 0)
+    screen.line_rel(track_infos[3].position * 8, 0)
     screen.stroke()
     screen.move(10, 40)
     screen.text("fade time:")
@@ -132,15 +195,16 @@ function redraw()
     screen.update()
 end
 
+------- METRO -------
 function update_positions(i, pos)
-    normalized_position = (pos) / durations[i]
-    positions[i] = math.floor(normalized_position * 8) + 1
-    print("positioni:" .. positions[i])
-    redraw()
+    normalized_position = (pos) / track_infos[i].duration
+    track_infos[i].position = math.floor(normalized_position * 8) + 1
+    redraw_screen()
     grid_dirty = true
     redraw_grid()
 end
 
+------- UTIL -------
 function get_duration(file)
     if util.file_exists(file) == true then
         local ch, samples, samplerate = audio.file_info(file)
