@@ -1,4 +1,4 @@
--- softcut study 3: cut
+-- softcut study
 --
 -- E2 fade time
 -- E3 metro time (random cut)
@@ -12,10 +12,17 @@ g = grid.connect()
 a = arc.connect()
 
 --------- CONSTANTS -----------------------
-files = { _path.dust .. "/audio/Loops/piano.wav",
-          _path.dust .. "/audio/Loops/piano.wav",
-          _path.dust .. "/audio/Loops/piano.wav",
-          _path.dust .. "/audio/Loops/piano.wav" }
+files = { _path.dust .. "/audio/joda_samples/chakcha1.wav",
+          _path.dust .. "/audio/joda_samples/korikito1.wav",
+          _path.dust .. "/audio/joda_samples/lotus_notee.wav",
+}
+
+TRACKS = 3
+SAMPLE_RATE = 48000
+
+blink_state = false
+shift = false
+blink_position = { x = 1, y = 1 }
 
 fade_time = 0.00
 metro_time = 1.0
@@ -23,182 +30,208 @@ metro_time = 1.0
 speed_list = { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0 }
 speed_step = 3
 reverse = 1
-duration = 0
+duration = 8
 position = 0
 arc_position = 0
 is_playing = 0
-momentary = { false, false, false, false }
+dirty_grid = false
+dirty_arc = false
 
-track_info = { speedlist = speed_list,
-               speed_step = speed_step,
-               reverse = reverse,
-               duration = duration,
-               is_playing = is_playing,
-               position = position,
-               arc_position = arc_position,
-               momentary = momentary }
-
-track_infos = { track_info, track_info, track_info }
-
-positions = { 0, 0, 0, 0 }
-
-TRACKS = 1
-
-------- INIT -------
-function init()
-    -- grid
-    grid_dirty = true
-    init_softcut()
-
-end
-
-function init_softcut()
-    softcut.buffer_clear() -- Clear the buffer before loading the new file
-    get_duration(files[1])
-    -- softcut
-
-    local ch, samples = audio.file_info(files[1])
-    local file_duration = samples / 48000
-
-    for i = 1, TRACKS, 2 do
-        track_infos[i].duration = file_duration
-
-        softcut.buffer_read_mono(files[i], 0, 0, file_duration, i, i)
-        softcut.buffer_read_mono(files[i], 0, 0, file_duration, i + 1, i + 1)
-
-        softcut.enable(i, 0)
-        softcut.enable(i + 1, 0)
-
-        softcut.enable(i, 1)
-        softcut.enable(i + 1, 1)
-
-        softcut.buffer(i, 1)
-        softcut.buffer(i + 1, 0)
-
-        softcut.level(i, 1.0)
-        softcut.level(i + 1, 1.0)
-
-        softcut.pan(i, -1)
-        softcut.pan(i + 1, 1)
-
-        softcut.rate(i, 1)
-        softcut.rate(i + 1, 1)
-
-        softcut.loop(i, 1)
-        softcut.loop(i + 1, 1)
-
-        softcut.fade_time(i, fade_time)
-        softcut.fade_time(i + 1, fade_time)
-
-        softcut.loop_start(i, 0)
-        softcut.loop_start(i + 1, 0)
-
-        softcut.loop_end(i, file_duration)
-        softcut.loop_end(i + 1, file_duration)
-
-        softcut.position(i, 0)
-        softcut.position(i + 1, 0)
-
-        softcut.play(i, 1)
-        softcut.play(i + 1, 1)
-
-        softcut.phase_quant(i, 0.5)
-        --
-    end
-
-    softcut.event_phase(update_positions)
-    softcut.poll_start_phase()
+track_infos = {}
+for i = 1, 3 do
+    start_in_buffer = (i - 1) * duration
+    track_infos[i] = {
+        speedlist = speed_list,
+        speed_step = speed_step,
+        reverse = reverse,
+        duration = duration,
+        is_playing = is_playing,
+        is_recording = 0,
+        position = position,
+        arc_position = arc_position,
+        momentary = { false, false, false, false },
+        loop_storage = { { start = 0, length = 0 },
+                         { start = 0, length = 0 },
+                         { start = 0, length = 0 },
+                         { start = 0, length = 0 } },
+        start_in_buffer = start_in_buffer
+    }
 end
 
 ------- ARC -------
 function redraw_arc()
-    a:all(0)
-    for i = 1, TRACKS do
-        a:led(i, track_infos[i].arc_position, 2)
-        a:led(i, track_infos[i].arc_position + 1, 15)
-        a:led(i, track_infos[i].arc_position + 2, 2)
-
-
+    if dirty_arc then
+        a:all(0)
+        for i = 1, TRACKS do
+            a:led(i, track_infos[i].arc_position, 2)
+            a:led(i, track_infos[i].arc_position + 1, 15)
+            a:led(i, track_infos[i].arc_position + 2, 2)
+        end
+        a:refresh()
     end
-    a:refresh()
 end
 
 ------- GRID -------
 function redraw_grid()
-    g:all(0)
-    -- show loop presets
-    for i = 1, 4 do
-        for j = 1, TRACKS do
-            g:led(4 + i, j * 2 - 1, 15)
+    if dirty_grid then
+        g:all(0)
+        -- show loop presets
+        for i = 1, 4 do
+            for j = 1, TRACKS do
+                g:led(4 + i, j * 2 - 1, 15)
+            end
         end
-    end
-    -- show current positions
-    for i = 1, TRACKS do
-        g:led(track_infos[i].position, i * 2, 15)
-    end
-    -- toggle play, reverse, speed down, speed up
-    for i = 1, 4 do
-        if track_infos[1].momentary[i] then
-            -- if the key is held...
-            g:led(i, 1, 15) -- turn on that LED!
+        -- show current positions
+        for i = 1, TRACKS do
+            g:led(track_infos[i].position, i * 2, 15)
         end
-
+        -- toggle play, reverse, speed down, speed up
+        for i = 1, TRACKS do
+            for j = 1, 4 do
+                if track_infos[i].momentary[j] then
+                    g:led(j, i * 2 - 1, 15)
+                end
+            end
+        end
+        if shift then
+            g:led(8, 8, 15)
+        end
+        g:refresh()
     end
-    g:refresh()
 end
 
 function g.key(x, y, z)
+    print_track_infos()
+
+    selected_track = math.floor(y / 2) + 1
     -- momentary
-    for i = 1, 4 do
-        if (x == i and y == 1) then
-            track_infos[1].momentary[i] = z == 1 and true or false
+    if (get_is_control_row(y)) then
+        for i = 1, 4 do
+            if (x == i) then
+                track_infos[math.floor(y / 2) + 1].momentary[i] = z == 1 and true or false
+            end
         end
     end
+    -- toggle shift
+    if (x == 8 and y == 8) then
+        shift = z == 1 and true or false
+    end
 
+    --
     if z == 1 then
-        if y == 1 then
-            print("toggle")
-            -- toggle play
+        if get_is_control_row(y) then
+            selected_track = math.floor(y / 2) + 1
+            -- toggle record
             if x == 1 then
-                track_infos[1].is_playing = 1 - track_infos[1].is_playing
-                softcut.play(1, track_infos[1].is_playing)
-                softcut.play(2, track_infos[1].is_playing)
+                track_infos[selected_track].is_recording = 1 - track_infos[selected_track].is_recording
+
+                softcut.rec(y, track_infos[selected_track].is_recording)
+                softcut.rec(y + 1, track_infos[selected_track].is_recording)
+
+                softcut.play(y, track_infos[selected_track].is_playing)
+                softcut.play(y + 1, track_infos[selected_track].is_playing)
+
+            end
+            -- toggle reverse
+            if x == 2 then
+                print(y)
+                track_infos[selected_track].reverse = track_infos[selected_track].reverse == 1 and -1 or 1
+                softcut.rate(y, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
+                softcut.rate(y + 1, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
             end
             -- set Tempo
-            if x == 4 then
-                if (track_infos[1].speed_step < #speed_list) then
-                    track_infos[1].speed_step = track_infos[1].speed_step + 1
-                    softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
-                    softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
-                end
-            end
             if x == 3 then
-                if (track_infos[1].speed_step > 1) then
-                    track_infos[1].speed_step = track_infos[1].speed_step - 1
-                    softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
-                    softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
+                if (track_infos[selected_track].speed_step > 1) then
+                    track_infos[selected_track].speed_step = track_infos[selected_track].speed_step - 1
+
+                    softcut.rate(y, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
+                    softcut.rate(y + 1, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
                 end
             end
-            -- set direction
-            if x == 2 then
-                reverse = reverse * -1
-                softcut.rate(1, speed_list[track_infos[1].speed_step] * reverse)
-                softcut.rate(2, speed_list[track_infos[1].speed_step] * reverse)
+            if x == 4 then
+                if (track_infos[selected_track].speed_step < #speed_list) then
+                    track_infos[selected_track].speed_step = track_infos[selected_track].speed_step + 1
+                    softcut.rate(y, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
+                    softcut.rate(y + 1, speed_list[track_infos[selected_track].speed_step] * track_infos[selected_track].reverse)
+                end
             end
+            -- set loop 1
+            if x == 5 then
+                -- set softcut to loop 1
+                softcut.loop_start(y, track_infos[selected_track].loop_storage[1].start)
+                softcut.loop_start(y + 1, track_infos[selected_track].loop_storage[1].start)
+
+                softcut.loop_end(y, track_infos[selected_track].loop_storage[1].start + track_infos[selected_track].loop_storage[1].length)
+                softcut.loop_end(y + 1, track_infos[selected_track].loop_storage[1].start + track_infos[selected_track].loop_storage[1].length)
+            end
+            -- set loop 2
+            if x == 6 then
+                -- set softcut to loop 2
+                softcut.loop_start(y, track_infos[selected_track].loop_storage[2].start)
+                softcut.loop_start(y + 1, track_infos[selected_track].loop_storage[2].start)
+
+                softcut.loop_end(y, track_infos[selected_track].loop_storage[2].start + track_infos[selected_track].loop_storage[2].length)
+                softcut.loop_end(y + 1, track_infos[selected_track].loop_storage[2].start + track_infos[selected_track].loop_storage[2].length)
+            end
+            -- set loop 3
+            if x == 7 then
+                -- set softcut to loop 3
+                softcut.loop_start(y, track_infos[selected_track].loop_storage[3].start)
+                softcut.loop_start(y + 1, track_infos[selected_track].loop_storage[3].start)
+
+                softcut.loop_end(y, track_infos[selected_track].loop_storage[3].start + track_infos[selected_track].loop_storage[3].length)
+                softcut.loop_end(y + 1, track_infos[selected_track].loop_storage[3].start + track_infos[selected_track].loop_storage[3].length)
+            end
+            -- set loop 4
+            if x == 8 then
+                -- set softcut to loop 4
+                softcut.loop_start(y, track_infos[selected_track].loop_storage[4].start)
+                softcut.loop_start(y + 1, track_infos[selected_track].loop_storage[4].start)
+
+                softcut.loop_end(y, track_infos[selected_track].loop_storage[4].start + track_infos[selected_track].loop_storage[4].length)
+                softcut.loop_end(y + 1, track_infos[selected_track].loop_storage[4].start + track_infos[selected_track].loop_storage[4].length)
+
+            end
+
         end
-        if y == 2 then
-            -- cut audio
-            softcut.play(1, 1)
-            softcut.play(2, 1)
-            -- set loop start
-            softcut.position(1, ((x - 1) / 8.0) * track_infos[1].duration)
-            softcut.position(2, ((x - 1) / 8.0) * track_infos[1].duration)
 
+        if is_buffer_row(y) then
+            if not shift then
+                print("buffer row")
+                buffer = y - 1
+                selected_track = math.floor(y / 2)
+                print('Buffer ' .. buffer)
+                print("selected track " .. selected_track)
+                -- cut audio
+                track_infos[selected_track].is_playing = 1
+                softcut.play(buffer, track_infos[selected_track].is_playing)
+                softcut.play(buffer + 1, track_infos[selected_track].is_playing)
 
+                -- set loop start
+                softcut.position(buffer, ((x - 1) / 8.0) * track_infos[selected_track].duration)
+                softcut.position(buffer + 1, ((x - 1) / 8.0) * track_infos[selected_track].duration)
+
+                -- set loop to full length
+
+                softcut.loop_start(buffer, track_infos[selected_track].start_in_buffer)
+                softcut.loop_start(buffer + 1, track_infos[selected_track].start_in_buffer)
+
+                softcut.loop_end(buffer, track_infos[selected_track].start_in_buffer + track_infos[selected_track].duration)
+                softcut.loop_end(buffer + 1, track_infos[selected_track].start_in_buffer + track_infos[selected_track].duration)
+            else
+                print("buffer row")
+                buffer = y - 1
+                selected_track = math.floor(y / 2)
+                track_infos[selected_track].is_playing = 0
+                -- cut audio
+                softcut.play(buffer, track_infos[selected_track].is_playing)
+                softcut.play(buffer + 1, track_infos[selected_track].is_playing)
+            end
         end
 
     end
-    redraw_grid()
+    dirty_grid = true
+    dirty_arc = true
 
 end
 
@@ -221,11 +254,11 @@ function redraw()
     screen.move(10, 20)
     screen.line_rel(track_infos[1].position * 8, 0)
     screen.move(40, 20)
-    screen.line_rel(track_infos[2].position * 8, 0)
-    screen.move(70, 20)
-    screen.line_rel(track_infos[3].position * 8, 0)
-    screen.move(100, 20)
-    screen.line_rel(track_infos[3].position * 8, 0)
+    --screen.line_rel(track_infos[2].position * 8, 0)
+    --screen.move(70, 20)
+    --screen.line_rel(track_infos[3].position * 8, 0)
+    --screen.move(100, 20)
+    --screen.line_rel(track_infos[3].position * 8, 0)
     screen.stroke()
     screen.move(10, 40)
     screen.text("fade time:")
@@ -240,13 +273,19 @@ end
 
 ------- METRO -------
 function update_positions(i, pos)
-    normalized_position = (pos) / track_infos[i].duration
-    track_infos[i].position = math.floor(normalized_position * 8) + 1
-    track_infos[i].arc_position = math.floor(normalized_position * 56) + 1
-    redraw()
-    grid_dirty = true
-    redraw_grid()
-    redraw_arc()
+    if (pos and i <= #track_infos * 2) then
+        if (i % 2 == 1) then
+            selected_track = math.floor(i / 2 + 1)
+            normalized_position = (pos) / track_infos[selected_track].duration
+
+            track_infos[selected_track].position = math.floor(normalized_position * 8.0) + 1
+            track_infos[selected_track].arc_position = math.floor(normalized_position * 64.0) + 1
+            --redraw()
+            --grid_dirty = true
+            dirty_grid = true
+            dirty_arc = true
+        end
+    end
 end
 
 ------- UTIL -------
@@ -263,4 +302,130 @@ function get_duration(file)
     else
         print "read_wav(): file not found"
     end
+end
+
+function print_track_infos()
+    for i = 1, #track_infos do
+        print("Track " .. i .. " info:")
+        print("Speed Step: " .. track_infos[i].speed_step)
+        print("Reverse: " .. track_infos[i].reverse)
+        print("Duration: " .. track_infos[i].duration)
+        print("Is Playing: " .. track_infos[i].is_playing)
+        print("Is Recording: " .. track_infos[i].is_recording)
+        print("Position: " .. track_infos[i].position)
+        print("Arc Position: " .. track_infos[i].arc_position)
+        for j = 1, 4 do
+            print("Loop " .. j .. " start: " .. track_infos[i].loop_storage[j].start)
+            print("Loop " .. j .. " length: " .. track_infos[i].loop_storage[j].length)
+        end
+        print("---------")
+    end
+end
+
+function get_is_control_row(y)
+
+    return y <= 6 and y == 1 or y == 3 or y == 5
+end
+
+function is_buffer_row(y)
+
+    print("y: " .. y)
+    return y == 2 or y == 4 or y == 6
+end
+------- INIT -------
+function init()
+    metro.free_all()
+    for i = 1, TRACKS do
+        --local ch, samples = audio.file_info(files[i])
+        --local file_duration = samples / SAMPLE_RATE
+        --track_infos[i].duration = file_duration
+        start = 0
+        length = track_infos[i].duration / 4.0 -- define length
+        for j = 1, 4 do
+            track_infos[i].loop_storage[j].start = start + length * (j - 1)
+            track_infos[i].loop_storage[j].length = length
+        end
+    end
+
+    gridredrawtimer = metro.init(function()
+        redraw_grid()
+    end, 0.02, -1)
+    gridredrawtimer:start()
+    dirty_grid = true
+
+    arc_redraw_timer = metro.init(function()
+        redraw_arc()
+    end, 0.02, -1)
+    arc_redraw_timer:start()
+    dirty_arc = true
+
+    init_softcut()
+
+    redraw_grid()
+    redraw_arc()
+    redraw()
+end
+
+function init_softcut()
+    -- check out sync function, softcut.voice_sync function.
+    audio.level_adc_cut(1)
+    audio.level_adc_cut(2)
+    softcut.buffer_clear() -- Clear the buffer before loading the new file
+
+
+    total_duration = 0
+    for i = 1, TRACKS do
+        stereo_left = i * 2 - 1
+        stereo_right = i * 2
+
+        softcut.level_input_cut(1, stereo_left, 1.0)
+        softcut.level_input_cut(2, stereo_right, 1.0)
+
+        softcut.rec_level(stereo_left, 1.0)
+        softcut.rec_level(stereo_right, 1.0)
+
+        softcut.enable(stereo_left, 1)
+        softcut.enable(stereo_right, 1)
+
+        softcut.buffer(stereo_left, stereo_left)
+        softcut.buffer(stereo_right, stereo_right)
+
+        softcut.level(stereo_left, 1.0)
+        softcut.level(stereo_right, 1.0)
+
+        softcut.pan(stereo_left, -1)
+        softcut.pan(stereo_right, 1)
+
+        softcut.rate(stereo_left, 1)
+        softcut.rate(stereo_right, 1)
+
+        softcut.voice_sync(stereo_left, stereo_right, 0)
+
+        softcut.loop(stereo_left, 1)
+        softcut.loop(stereo_right, 1)
+
+        softcut.fade_time(stereo_left, fade_time)
+        softcut.fade_time(stereo_right, fade_time)
+
+        --sum duration of all tracks
+        total_duration = total_duration + (track_infos[i].duration)
+
+        print("total duration: " .. total_duration)
+
+        softcut.loop_start(stereo_left, track_infos[i].start_in_buffer)
+        softcut.loop_start(stereo_right, track_infos[i].start_in_buffer)
+
+        softcut.loop_end(stereo_left, track_infos[i].start_in_buffer + track_infos[i].duration)
+        softcut.loop_end(stereo_right, track_infos[i].start_in_buffer + track_infos[i].duration)
+
+        softcut.position(stereo_left, 0)
+        softcut.position(stereo_right, 0)
+
+        softcut.phase_quant(stereo_right, .1)
+        softcut.phase_quant(stereo_left, .1)
+
+        softcut.event_phase(update_positions)
+        softcut.poll_start_phase()
+    end
+
 end
