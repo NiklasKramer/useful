@@ -26,6 +26,7 @@ SAMPLE_RATE = 48000
 shift = false
 selected = 1
 blinking = false
+slow_blinking = false
 
 fade_time = 0.00
 
@@ -75,6 +76,19 @@ function init()
 
     set_loops()
     print_track_infos()
+    init_and_start_timers()
+
+    dirty_screen = true
+
+    init_softcut()
+
+    redraw_grid()
+    redraw_arc()
+    redraw()
+    --init_reroute_audio()
+end
+
+function init_and_start_timers()
 
     -- grid redraw timer
     gridredrawtimer = metro.init(function()
@@ -105,17 +119,20 @@ function init()
         end
         dirty_grid = true
 
-    end, 1 / 5, -1)
+    end, 1 / 20, -1)
     blink_timer:start()
 
-    dirty_screen = true
+    slow_blink_timer = metro.init(function()
+        if slow_blinking == true then
+            slow_blinking = false
+        else
+            slow_blinking = true
+        end
+        dirty_grid = true
 
-    init_softcut()
+    end, 1 / 2, -1)
+    slow_blink_timer:start()
 
-    redraw_grid()
-    redraw_arc()
-    redraw()
-    --init_reroute_audio()
 end
 
 function init_softcut()
@@ -251,15 +268,37 @@ function redraw_grid()
             --end
         end
     end
+
+    --
     if shift then
         g:led(8, 8, 15)
     end
+    for i = 1, #patterns do
+        if patterns[i].mode == Pattern_Modes.REC then
+            if blinking then
+                g:led(i, 8, 0)
+            else
+                g:led(i, 8, 15)
+            end
+        elseif patterns[i].mode == Pattern_Modes.PAUSE then
+            g:led(i, 8, 15)
+        elseif patterns[i].mode == Pattern_Modes.PLAY then
+            if slow_blinking then
+                g:led(i, 8, 0)
+            else
+                g:led(i, 8, 15)
+            end
+        elseif patterns[i].mode == Pattern_Modes.CLEAR then
+            g:led(i, 8, 0)
+        end
+    end
+
     g:refresh()
 end
 
 function play_grid_event(event)
 
-    --print(event["x"], event["y"], event["z"])
+    print(event["x"], event["y"], event["z"])
     print('play_grid_event')
     grid_interact(event["x"], event["y"], event["z"])
     if (event) then
@@ -272,14 +311,15 @@ function play_grid_event(event)
 end
 
 function record_grid_event(x, y, z)
-    if patterns[1].mode == Pattern_Modes.REC then
-        print("record_grid_event")
-        patterns[1].pattern:watch(
-                {
-                    ["x"] = x,
-                    ["y"] = y,
-                    ["z"] = z
-                })
+    for i = 1, #patterns do
+        if patterns[i].mode == Pattern_Modes.REC then
+            patterns[i].pattern:watch(
+                    {
+                        ["x"] = x,
+                        ["y"] = y,
+                        ["z"] = z
+                    })
+        end
     end
 end
 
@@ -451,40 +491,38 @@ function grid_interact(x, y, z)
                 softcut.play(buffer + 1, track_infos[selected_track].is_playing)
             end
         end
-        if (x == 1 and y == 8) then
-            if (patterns[1].mode == Pattern_Modes.REC) then
-                print("toggle pattern rec stop")
-                patterns[1].pattern:rec_stop()
-                patterns[1].mode = Pattern_Modes.PAUSE
-            elseif (patterns[1].mode == Pattern_Modes.PAUSE or patterns[1].mode == Pattern_Modes.CLEAR) then
-                print("toggle pattern rec start")
-                patterns[1].pattern:rec_start()
-                patterns[1].mode = Pattern_Modes.REC
-                play_grid_event()
 
+        if (x <= #patterns and y == 8) then
+            if not shift then
+                if (patterns[x].mode == Pattern_Modes.REC) then
+                    print("toggle pattern rec stop")
+                    patterns[x].pattern:rec_stop()
+                    patterns[x].mode = Pattern_Modes.PAUSE
+                elseif (patterns[x].mode == Pattern_Modes.CLEAR) then
+                    print("toggle pattern rec start")
+                    patterns[x].pattern:rec_start()
+                    patterns[x].mode = Pattern_Modes.REC
+                    play_grid_event()
+                elseif (patterns[x].mode == Pattern_Modes.PAUSE) then
+                    print("toggle pattern play start")
+                    patterns[x].pattern:start()
+                    patterns[x].mode = Pattern_Modes.PLAY
+                    play_grid_event()
+                elseif (patterns[x].mode == Pattern_Modes.PLAY) then
+                    print("toggle pattern play stop")
+                    patterns[x].pattern:stop()
+                    patterns[x].mode = Pattern_Modes.PAUSE
+                end
+            else
+                print("toggle pattern clear")
+                patterns[x].pattern:clear()
+                patterns[x].mode = Pattern_Modes.CLEAR
             end
         end
-        if (x == 2 and y == 8) then
-            if (patterns[1].mode == Pattern_Modes.PLAY) then
-                print("toggle pattern player stop")
-
-                patterns[1].pattern:stop()
-                patterns[1].mode = Pattern_Modes.PAUSE
-
-            elseif (patterns[1].mode == Pattern_Modes.PAUSE) then
-                print("toggle pattern player start")
-                patterns[1].pattern:start()
-                patterns[1].mode = Pattern_Modes.PLAY
-                play_grid_event()
-
-            end
-        end
-
     end
     dirty_grid = true
     dirty_arc = true
     dirty_screen = true
-
 end
 
 ----- SCREEN ------
